@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D AR Ludo - Pro Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #020617; font-family: 'Inter', sans-serif; }
+        canvas { display: block; }
+        .ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .glass {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            pointer-events: auto;
+        }
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        #restart-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel space-y-4">
+        <div class="glass p-5 rounded-3xl w-80">
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-white font-black text-2xl tracking-tighter italic">LUDO <span class="text-cyan-400">PRO</span></h1>
+                <div class="status-pill bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">AI VS AI</div>
+            </div>
+            
+            <div id="leaderboard" class="space-y-4">
+                <!-- AI Stats injected here -->
+            </div>
+        </div>
+
+        <div class="glass p-4 rounded-2xl flex items-center justify-between gap-4">
+            <div class="flex-1">
+                <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Active Neural Link</p>
+                <div class="flex items-center gap-2">
+                    <div id="team-indicator" class="w-3 h-3 rounded-full animate-pulse"></div>
+                    <p id="current-action" class="text-white font-black text-sm uppercase italic">Waiting...</p>
+                </div>
+            </div>
+            <div id="dice-display" class="w-14 h-14 glass flex flex-col items-center justify-center rounded-xl border border-white/20">
+                <span class="text-[8px] text-white/40 uppercase font-bold">Roll</span>
+                <span class="text-2xl font-black text-white leading-none">-</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="restart-overlay">
+        <div class="text-center">
+            <div class="mb-4 inline-block p-4 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+                <svg class="w-12 h-12 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+            <h2 class="text-white text-5xl font-black mb-2 tracking-tighter">TOURNAMENT ENDED</h2>
+            <p class="text-slate-400 text-lg mb-10 max-w-md mx-auto">All AI entities have reached the central core. System status: Optimal.</p>
+            <button onclick="location.reload()" class="px-12 py-5 bg-white hover:bg-cyan-400 text-slate-950 font-black rounded-2xl transition-all transform hover:scale-105 uppercase tracking-widest text-sm">Initiate New Match</button>
+        </div>
+    </div>
+
+    <script id="token-v-shader" type="x-shader/x-vertex">
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vViewPosition = -mvPosition.xyz;
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script id="token-f-shader" type="x-shader/x-fragment">
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+        uniform vec3 uColor;
+        uniform float uTime;
+
+        void main() {
+            vec3 normal = normalize(vNormal);
+            vec3 viewDir = normalize(vViewPosition);
+            float fresnel = pow(1.5 - dot(normal, viewDir), 2.5);
+            float pulse = 0.8 + 0.2 * sin(uTime * 4.0);
+            vec3 finalColor = mix(uColor * 0.5, uColor * 2.5, fresnel);
+            gl_FragColor = vec4(finalColor * pulse, 0.9);
+        }
+    </script>
+
+    <script>
+        const PLAYERS = ['RED', 'GREEN', 'YELLOW', 'BLUE'];
+        const COLORS = {
+            RED: new THREE.Color(0xff3333),
+            GREEN: new THREE.Color(0x33ff33),
+            YELLOW: new THREE.Color(0xffff33),
+            BLUE: new THREE.Color(0x3333ff)
+        };
+
+        class Realistic_Ludo_AR {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.tokens = [];
+                this.gameState = { RED: [0,0,0,0], GREEN: [0,0,0,0], YELLOW: [0,0,0,0], BLUE: [0,0,0,0] };
+                this.currentPlayer = 0;
+                this.isGameOver = false;
+
+                this.init();
+                this.createBoard();
+                this.createTokens();
+                this.animate();
+                setTimeout(() => this.playTurn(), 1000);
+            }
+
+            init() {
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                document.body.appendChild(this.renderer.domElement);
+                
+                this.camera.position.set(0, 18, 14);
+                this.camera.lookAt(0, -2, 0);
+
+                const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+                this.scene.add(ambient);
+
+                const point = new THREE.PointLight(0x06b6d4, 2, 50);
+                point.position.set(0, 10, 0);
+                this.scene.add(point);
+            }
+
+            createBoard() {
+                const group = new THREE.Group();
+                
+                // Create the cross-shaped board tiles
+                for (let r = -7; r <= 7; r++) {
+                    for (let c = -7; c <= 7; c++) {
+                        let isTile = false;
+                        let tileColor = 0x1e293b;
+                        let opacity = 0.3;
+
+                        // Check if in Ludo path (the cross shape)
+                        if ((Math.abs(r) <= 1) || (Math.abs(c) <= 1)) {
+                            isTile = true;
+                            opacity = 0.6;
+                        }
+
+                        // Check if in Bases
+                        const inBase = (Math.abs(r) >= 5 && Math.abs(c) >= 5);
+                        if (inBase) {
+                            isTile = true;
+                            opacity = 0.8;
+                            if (r < 0 && c < 0) tileColor = COLORS.RED.getHex();
+                            else if (r < 0 && c > 0) tileColor = COLORS.GREEN.getHex();
+                            else if (r > 0 && c > 0) tileColor = COLORS.YELLOW.getHex();
+                            else if (r > 0 && c < 0) tileColor = COLORS.BLUE.getHex();
+                        }
+
+                        // Set path colors (Home Stretch)
+                        if (r === 0 && c < 0 && c > -7) tileColor = COLORS.RED.getHex();
+                        if (c === 0 && r < 0 && r > -7) tileColor = COLORS.GREEN.getHex();
+                        if (r === 0 && c > 0 && c < 7) tileColor = COLORS.YELLOW.getHex();
+                        if (c === 0 && r > 0 && r < 7) tileColor = COLORS.BLUE.getHex();
+
+                        if (isTile) {
+                            const geo = new THREE.BoxGeometry(0.9, 0.1, 0.9);
+                            const mat = new THREE.MeshPhongMaterial({ 
+                                color: tileColor, 
+                                transparent: true, 
+                                opacity: opacity,
+                                shininess: 100
+                            });
+                            const tile = new THREE.Mesh(geo, mat);
+                            tile.position.set(c, -0.05, r);
+                            group.add(tile);
+
+                            // Add glowing border for active paths
+                            if (opacity > 0.5) {
+                                const wireframe = new THREE.EdgesGeometry(geo);
+                                const line = new THREE.LineSegments(wireframe, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 }));
+                                line.position.copy(tile.position);
+                                group.add(line);
+                            }
+                        }
+                    }
+                }
+                this.scene.add(group);
+            }
+
+            createTokens() {
+                PLAYERS.forEach(p => {
+                    this.gameState[p].forEach((pos, i) => {
+                        const geometry = new THREE.SphereGeometry(0.35, 32, 32);
+                        const material = new THREE.ShaderMaterial({
+                            vertexShader: document.getElementById('token-v-shader').textContent,
+                            fragmentShader: document.getElementById('token-f-shader').textContent,
+                            uniforms: {
+                                uColor: { value: COLORS[p] },
+                                uTime: { value: 0 }
+                            },
+                            transparent: true
+                        });
+                        const mesh = new THREE.Mesh(geometry, material);
+                        mesh.userData = { player: p, index: i };
+                        this.scene.add(mesh);
+                        this.tokens.push(mesh);
+                    });
+                });
+                this.syncPositions();
+            }
+
+            syncPositions() {
+                this.tokens.forEach(t => {
+                    const { player, index } = t.userData;
+                    const step = this.gameState[player][index];
+                    
+                    if (step === 0) { // Base positions
+                        const xBase = player === 'RED' || player === 'BLUE' ? -6 : 6;
+                        const zBase = player === 'RED' || player === 'GREEN' ? -6 : 6;
+                        const xOff = (index % 2 === 0 ? -0.5 : 0.5);
+                        const zOff = (index < 2 ? -0.5 : 0.5);
+                        t.position.set(xBase + xOff, 0.5, zBase + zOff);
+                        t.scale.set(1,1,1);
+                    } else if (step >= 57) { // Finished
+                        t.position.set(0, 0.5, 0);
+                        t.scale.set(0.1, 0.1, 0.1); // Miniaturize in center
+                    } else {
+                        // Advanced path mapping for a cross-shaped board
+                        // Path: Start at (base exit) -> Go around perimeter -> Go to center
+                        let x = 0, z = 0;
+                        if (player === 'RED') {
+                            if (step < 52) { /* Loop logic simplified for fast sim */ 
+                                z = -1; x = -7 + step * 0.25; 
+                            } else { z = 0; x = -6 + (step-51); }
+                        } else if (player === 'GREEN') {
+                            if (step < 52) { x = 1; z = -7 + step * 0.25; }
+                            else { x = 0; z = -6 + (step-51); }
+                        } else if (player === 'YELLOW') {
+                            if (step < 52) { z = 1; x = 7 - step * 0.25; }
+                            else { z = 0; x = 6 - (step-51); }
+                        } else {
+                            if (step < 52) { x = -1; z = 7 - step * 0.25; }
+                            else { x = 0; z = 6 - (step-51); }
+                        }
+                        t.position.set(x, 0.5, z);
+                    }
+                });
+                this.updateUI();
+            }
+
+            updateUI() {
+                const lb = document.getElementById('leaderboard');
+                lb.innerHTML = '';
+                PLAYERS.forEach(p => {
+                    const finished = this.gameState[p].filter(s => s >= 57).length;
+                    const row = document.createElement('div');
+                    row.className = `flex justify-between items-center p-3 rounded-2xl bg-white/5 border-l-4 ${this.currentPlayer === PLAYERS.indexOf(p) ? 'border-white brightness-125 bg-white/10' : 'border-transparent'}`;
+                    row.style.borderLeftColor = `#${COLORS[p].getHexString()}`;
+                    row.innerHTML = `
+                        <div class="flex flex-col">
+                            <span class="text-white font-black text-xs">${p} CORE</span>
+                            <span class="text-[9px] text-white/40 font-bold uppercase tracking-widest">${finished === 4 ? 'Status: Complete' : 'Status: Processing'}</span>
+                        </div>
+                        <div class="flex gap-1.5">
+                            ${Array(4).fill(0).map((_, i) => `
+                                <div class="w-3 h-3 rounded-full ${i < finished ? 'shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'opacity-20'}" 
+                                     style="background: #${COLORS[p].getHexString()}"></div>
+                            `).join('')}
+                        </div>
+                    `;
+                    lb.appendChild(row);
+                });
+
+                const pName = PLAYERS[this.currentPlayer];
+                document.getElementById('team-indicator').style.backgroundColor = `#${COLORS[pName].getHexString()}`;
+            }
+
+            async playTurn() {
+                if (this.isGameOver) return;
+
+                const p = PLAYERS[this.currentPlayer];
+                document.getElementById('current-action').innerText = `${p} LINK ACTIVE`;
+                
+                const roll = Math.floor(Math.random() * 6) + 1;
+                document.getElementById('dice-display').querySelector('span:last-child').innerText = roll;
+
+                const movable = [];
+                this.gameState[p].forEach((s, i) => {
+                    if (s === 0 && roll === 6) movable.push(i);
+                    else if (s > 0 && s + roll <= 57) movable.push(i);
+                });
+
+                if (movable.length > 0) {
+                    await new Promise(r => setTimeout(r, 60));
+                    // Smart-ish AI: prioritize tokens already on track
+                    const choice = movable.sort((a,b) => this.gameState[p][b] - this.gameState[p][a])[0];
+                    if (this.gameState[p][choice] === 0) this.gameState[p][choice] = 1;
+                    else this.gameState[p][choice] += roll;
+                    
+                    this.syncPositions();
+                }
+
+                if (this.checkWin()) {
+                    document.getElementById('restart-overlay').style.display = 'flex';
+                    this.isGameOver = true;
+                    return;
+                }
+
+                this.currentPlayer = (this.currentPlayer + 1) % 4;
+                setTimeout(() => this.playTurn(), 40);
+            }
+
+            checkWin() {
+                return PLAYERS.every(p => this.gameState[p].every(s => s >= 57));
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                const time = performance.now() * 0.001;
+                
+                this.tokens.forEach(t => {
+                    t.material.uniforms.uTime.value = time;
+                    if(t.visible && t.scale.x > 0.5) {
+                        t.position.y = 0.5 + Math.sin(time * 6 + t.position.x * 2) * 0.08;
+                    }
+                });
+
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        window.onload = () => new Realistic_Ludo_AR();
+    </script>
+</body>
+</html>
