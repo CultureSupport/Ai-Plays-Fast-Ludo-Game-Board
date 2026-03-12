@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ludo AI Battle - 4 Way Computer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --red: #ef4444;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --blue: #3b82f6;
+        }
+
+        .ludo-grid {
+            display: grid;
+            grid-template-columns: repeat(15, 1fr);
+            grid-template-rows: repeat(15, 1fr);
+            aspect-ratio: 1 / 1;
+            width: 100%;
+            max-width: 600px;
+            border: 4px solid #333;
+            background: white;
+        }
+
+        .cell {
+            border: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .home-red { background-color: var(--red); }
+        .home-green { background-color: var(--green); }
+        .home-yellow { background-color: var(--yellow); }
+        .home-blue { background-color: var(--blue); }
+
+        /* Path highlighting */
+        .path-red { background-color: #fee2e2; border: 1px solid var(--red); }
+        .path-green { background-color: #dcfce7; border: 1px solid var(--green); }
+        .path-yellow { background-color: #fef9c3; border: 1px solid var(--yellow); }
+        .path-blue { background-color: #dbeafe; border: 1px solid var(--blue); }
+
+        .token {
+            width: 80%;
+            height: 80%;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            z-index: 10;
+            transition: all 0.1s ease-in-out;
+        }
+
+        .token.active { animation: pulse 0.4s infinite; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0,0,0,0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(0,0,0,0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+        }
+
+        .dice {
+            width: 70px;
+            height: 70px;
+            background: white;
+            border: 3px solid #333;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            font-weight: 900;
+            box-shadow: 4px 4px 0 #333;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 min-h-screen p-4 font-sans text-white">
+
+    <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- Controls & Stats -->
+        <div class="bg-slate-800 p-6 rounded-2xl shadow-2xl h-fit border border-slate-700">
+            <h2 class="text-2xl font-black mb-4 border-b border-slate-700 pb-2 italic uppercase tracking-tighter">AI Tournament</h2>
+            
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="p-3 rounded-lg bg-red-900/30 border border-red-500/50">
+                    <p class="text-[10px] uppercase font-bold text-red-400">Red AI</p>
+                    <p id="score-RED" class="text-xl font-black">0/4</p>
+                </div>
+                <div class="p-3 rounded-lg bg-green-900/30 border border-green-500/50">
+                    <p class="text-[10px] uppercase font-bold text-green-400">Green AI</p>
+                    <p id="score-GREEN" class="text-xl font-black">0/4</p>
+                </div>
+                <div class="p-3 rounded-lg bg-yellow-900/30 border border-yellow-500/50">
+                    <p class="text-[10px] uppercase font-bold text-yellow-400">Yellow AI</p>
+                    <p id="score-YELLOW" class="text-xl font-black">0/4</p>
+                </div>
+                <div class="p-3 rounded-lg bg-blue-900/30 border border-blue-500/50">
+                    <p class="text-[10px] uppercase font-bold text-blue-400">Blue AI</p>
+                    <p id="score-BLUE" class="text-xl font-black">0/4</p>
+                </div>
+            </div>
+
+            <div class="p-5 bg-slate-700 rounded-xl mb-4">
+                <div id="game-status" class="text-lg font-bold mb-3 text-center uppercase tracking-widest">Starting...</div>
+                <div class="flex justify-center items-center gap-6">
+                    <div id="main-dice" class="dice text-slate-900">1</div>
+                    <div class="text-xs text-slate-400 font-mono">
+                        SPEED: TURBO<br>
+                        MODE: 4-WAY CPU
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="window.location.reload()" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-xl font-bold uppercase transition">Reset Match</button>
+        </div>
+
+        <!-- Ludo Board -->
+        <div class="lg:col-span-2 flex justify-center">
+            <div id="ludo-board" class="ludo-grid rounded-lg overflow-hidden border-8 border-slate-800">
+                <!-- JS generated -->
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const PLAYERS = ['RED', 'GREEN', 'YELLOW', 'BLUE'];
+        const COLORS = { RED: '#ef4444', GREEN: '#22c55e', YELLOW: '#eab308', BLUE: '#3b82f6' };
+        
+        // Turbo Speed settings
+        const THINK_DELAY = 100;
+        const MOVE_DELAY = 100;
+
+        class TurboLudoAI {
+            constructor() {
+                this.currentPlayerIndex = 0;
+                this.diceValue = 1;
+                this.hasRolled = false;
+                this.tokens = {
+                    RED: [0, 0, 0, 0],
+                    GREEN: [0, 0, 0, 0],
+                    YELLOW: [0, 0, 0, 0],
+                    BLUE: [0, 0, 0, 0]
+                };
+                this.initBoard();
+                this.updateUI();
+                this.startAI();
+            }
+
+            initBoard() {
+                const board = document.getElementById('ludo-board');
+                board.innerHTML = '';
+                for (let r = 0; r < 15; r++) {
+                    for (let c = 0; c < 15; c++) {
+                        const cell = document.createElement('div');
+                        cell.className = 'cell';
+                        cell.dataset.r = r;
+                        cell.dataset.c = c;
+                        
+                        // Bases
+                        if (r < 6 && c < 6) cell.classList.add('home-red');
+                        if (r < 6 && c > 8) cell.classList.add('home-green');
+                        if (r > 8 && c < 6) cell.classList.add('home-blue');
+                        if (r > 8 && c > 8) cell.classList.add('home-yellow');
+                        
+                        // Path logic
+                        if ((r === 7 && c > 0 && c < 7) || (r === 6 && c === 1)) cell.classList.add('path-red');
+                        if ((c === 7 && r > 0 && r < 7) || (c === 8 && r === 1)) cell.classList.add('path-green');
+                        if ((r === 7 && c > 7 && c < 14) || (r === 8 && c === 13)) cell.classList.add('path-yellow');
+                        if ((c === 7 && r > 7 && r < 14) || (c === 6 && r === 13)) cell.classList.add('path-blue');
+                        
+                        if (r >= 6 && r <= 8 && c >= 6 && c <= 8) cell.style.backgroundColor = '#444';
+                        
+                        board.appendChild(cell);
+                    }
+                }
+            }
+
+            startAI() {
+                setTimeout(() => this.playTurn(), THINK_DELAY);
+            }
+
+            async playTurn() {
+                // 1. Roll
+                this.diceValue = Math.floor(Math.random() * 6) + 1;
+                this.hasRolled = true;
+                document.getElementById('main-dice').innerText = this.diceValue;
+                this.updateUI();
+
+                const player = PLAYERS[this.currentPlayerIndex];
+                const movable = [];
+                
+                this.tokens[player].forEach((pos, idx) => {
+                    if (pos === 0 && this.diceValue === 6) movable.push(idx);
+                    else if (pos > 0 && pos + this.diceValue <= 57) movable.push(idx);
+                });
+
+                if (movable.length > 0) {
+                    await new Promise(r => setTimeout(r, MOVE_DELAY));
+                    // Strategy: Move furthest token first, or exit base if 6
+                    let choice = movable[0];
+                    const inBaseIdx = movable.find(i => this.tokens[player][i] === 0);
+                    if (inBaseIdx !== undefined) choice = inBaseIdx;
+                    else {
+                        movable.sort((a,b) => this.tokens[player][b] - this.tokens[player][a]);
+                        choice = movable[0];
+                    }
+                    
+                    this.executeMove(player, choice);
+                } else {
+                    await new Promise(r => setTimeout(r, MOVE_DELAY));
+                    this.nextTurn();
+                }
+            }
+
+            executeMove(player, index) {
+                if (this.tokens[player][index] === 0) this.tokens[player][index] = 1;
+                else this.tokens[player][index] += this.diceValue;
+
+                // Update Finish count
+                const finished = this.tokens[player].filter(p => p === 57).length;
+                document.getElementById(`score-${player}`).innerText = `${finished}/4`;
+
+                if (this.diceValue === 6) {
+                    this.hasRolled = false;
+                    setTimeout(() => this.playTurn(), THINK_DELAY);
+                } else {
+                    this.nextTurn();
+                }
+                this.updateUI();
+            }
+
+            nextTurn() {
+                this.currentPlayerIndex = (this.currentPlayerIndex + 1) % 4;
+                this.hasRolled = false;
+                this.updateUI();
+                setTimeout(() => this.playTurn(), THINK_DELAY);
+            }
+
+            updateUI() {
+                const p = PLAYERS[this.currentPlayerIndex];
+                const status = document.getElementById('game-status');
+                status.innerText = `${p} CPU MOVING`;
+                status.style.color = COLORS[p];
+
+                document.querySelectorAll('.token').forEach(t => t.remove());
+                PLAYERS.forEach(p => {
+                    this.tokens[p].forEach((pos, idx) => {
+                        let r, c;
+                        if (pos === 0) {
+                            const offsets = [[1,1], [1,4], [4,1], [4,4]];
+                            const baseMap = { RED:[0,0], GREEN:[0,9], BLUE:[9,0], YELLOW:[9,9] };
+                            r = baseMap[p][0] + offsets[idx][0];
+                            c = baseMap[p][1] + offsets[idx][1];
+                        } else {
+                            // Simplified pathing for visual demo
+                            if (p === 'RED') { r = 7; c = pos; }
+                            else if (p === 'GREEN') { r = pos; c = 7; }
+                            else if (p === 'YELLOW') { r = 7; c = 14 - pos; }
+                            else { r = 14 - pos; c = 7; }
+                        }
+                        
+                        const cell = document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+                        if (cell) {
+                            const t = document.createElement('div');
+                            t.className = `token ${p === PLAYERS[this.currentPlayerIndex] ? 'active' : ''}`;
+                            t.style.backgroundColor = COLORS[p];
+                            cell.appendChild(t);
+                        }
+                    });
+                });
+            }
+        }
+
+        window.onload = () => {
+            new TurboLudoAI();
+        };
+    </script>
+</body>
+</html>
